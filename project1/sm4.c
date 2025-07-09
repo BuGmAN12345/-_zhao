@@ -1,8 +1,11 @@
 #include <stdint.h>
-#include <sm4.h>
-#include <endian.h>
 #include <immintrin.h>
+#include "sm4.h"
 
+#define SM4_NUM_ROUNDS		(32)
+typedef struct {
+	uint32_t rk[SM4_NUM_ROUNDS];
+} SM4_KEY;
 
 static uint32_t FK[4] = {
 	0xa3b1bac6, 0x56aa3350, 0x677d9197, 0xb27022dc,
@@ -344,52 +347,58 @@ void sm4_encrypt_blocks(const SM4_KEY *key, const uint8_t *in, size_t nblocks, u
 	}
 }
 
+void sm4_encrypt(const SM4_KEY *key, const uint8_t in[16], uint8_t out[16]);
+
+static inline void xor_block(uint8_t dst[16], const uint8_t a[16], const uint8_t b[16]) {
+    for (int i = 0; i < 16; i++) {
+        dst[i] = a[i] ^ b[i];
+    }
+}
+// CBC 模式加密
 void sm4_cbc_encrypt_blocks(const SM4_KEY *key, uint8_t iv[16],
-	const uint8_t *in, size_t nblocks, uint8_t *out)
-{
-	const uint8_t *piv = iv;
+                             const uint8_t *in, size_t nblocks,
+                             uint8_t *out) {
+    uint8_t feedback[16];
+    memcpy(feedback, iv, 16);
 
-	while (nblocks--) {
-		size_t i;
-		for (i = 0; i < 16; i++) {
-			out[i] = in[i] ^ piv[i];
-		}
-		sm4_encrypt(key, out, out);
-		piv = out;
-		in += 16;
-		out += 16;
-	}
+    while (nblocks--) {
+        xor_block(out, in, feedback);
+        sm4_encrypt(key, out, out);
+        memcpy(feedback, out, 16);
 
-	memcpy(iv, piv, 16);
+        in  += 16;
+        out += 16;
+    }
+
+    memcpy(iv, feedback, 16);
 }
 
+// CBC 模式解密
 void sm4_cbc_decrypt_blocks(const SM4_KEY *key, uint8_t iv[16],
-	const uint8_t *in, size_t nblocks, uint8_t *out)
-{
-	const uint8_t *piv = iv;
+                             const uint8_t *in, size_t nblocks,
+                             uint8_t *out) {
+    uint8_t feedback[16];
+    memcpy(feedback, iv, 16);
 
-	while (nblocks--) {
-		size_t i;
-		sm4_encrypt(key, in, out);
-		for (i = 0; i < 16; i++) {
-			out[i] ^= piv[i];
-		}
-		piv = in;
-		in += 16;
-		out += 16;
-	}
+    while (nblocks--) {
+        sm4_encrypt(key, in, out);
+        xor_block(out, out, feedback);
+        memcpy(feedback, in, 16);
 
-	memcpy(iv, piv, 16);
+        in  += 16;
+        out += 16;
+    }
+
+    memcpy(iv, feedback, 16);
 }
 
-
-
-static void ctr_incr(uint8_t a[16]) {
-	int i;
-	for (i = 15; i >= 0; i--) {
-		a[i]++;
-		if (a[i]) break;
-	}
+// CTR 模式计数器递增 (大端形式)
+static inline void ctr_incr(uint8_t ctr[16]) {
+    for (int i = 15; i >= 0; i--) {
+        if (++ctr[i] != 0) {
+            break;
+        }
+    }
 }
 
 void sm4_ctr_encrypt_blocks(const SM4_KEY *key, uint8_t ctr[16], const uint8_t *in, size_t nblocks, uint8_t *out)
