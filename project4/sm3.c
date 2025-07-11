@@ -217,6 +217,93 @@ static void sm3_process( sm3_context *ctx, uint8_t data[64] ) //压缩函数，�
 #endif
 }
 
+/*
+ * SM3 process buffer
+ */
+void sm3_update( sm3_context *ctx, uint8_t *input, int ilen ) //用于支持流式hash
+{
+    int fill;
+    uint32_t left;
+
+    if ( ilen <= 0 )
+        return;
+
+    left = ctx->total[0] & 0x3F; //计算当前缓冲区中剩余的字节数(总长度%64)
+    fill = 64 - left; //需要填充的字节数
+
+    ctx->total[0] += ilen;
+    ctx->total[0] &= 0xFFFFFFFF;
+
+    if ( ctx->total[0] < (uint32_t) ilen ) //进位
+        ctx->total[1]++;
+
+    if ( left && ilen >= fill )
+    {
+        memcpy( (void *) (ctx->buffer + left),
+                (void *) input, fill );
+        sm3_process( ctx, ctx->buffer ); //更新ctx->state
+        input += fill;
+        ilen  -= fill;
+        left = 0;
+    }
+
+    while ( ilen >= 64 )
+    {
+        sm3_process( ctx, input );
+        input += 64;
+        ilen  -= 64;
+    }
+
+    if ( ilen > 0 ) //如果不整除，则放在缓冲区中
+    {
+        memcpy( (void *) (ctx->buffer + left),
+                (void *) input, ilen );
+    }
+}
+
+static const uint8_t sm3_padding[64] =
+{
+    0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
+/*
+ * SM3 final digest
+ */
+void sm3_finish( sm3_context *ctx, uint8_t output[32] )
+{
+    uint32_t last, padn;
+    uint32_t high, low;
+    uint8_t msglen[8];
+
+    high = ( ctx->total[0] >> 29 )
+           | ( ctx->total[1] <<  3 );
+    low  = ( ctx->total[0] <<  3 );
+
+    PUT_ULONG_BE( high, msglen, 0 );
+    PUT_ULONG_BE( low,  msglen, 4 );
+
+    last = ctx->total[0] & 0x3F; //计算剩余的字节数
+    padn = ( last < 56 ) ? ( 56 - last ) : ( 120 - last );
+
+    sm3_update( ctx, (uint8_t *) sm3_padding, padn ); //填充数据
+    sm3_update( ctx, msglen, 8 );
+
+    PUT_ULONG_BE( ctx->state[0], output,  0 ); //将最终的哈希值（存储在 ctx->state 中）复制到输出缓冲区
+    PUT_ULONG_BE( ctx->state[1], output,  4 );
+    PUT_ULONG_BE( ctx->state[2], output,  8 );
+    PUT_ULONG_BE( ctx->state[3], output, 12 );
+    PUT_ULONG_BE( ctx->state[4], output, 16 );
+    PUT_ULONG_BE( ctx->state[5], output, 20 );
+    PUT_ULONG_BE( ctx->state[6], output, 24 );
+    PUT_ULONG_BE( ctx->state[7], output, 28 );
+}
+
+/*
+ * output = SM3( input buffer )
+ */
 void sm3( uint8_t *input, int ilen,
           uint8_t output[32] )
 {
@@ -225,6 +312,113 @@ void sm3( uint8_t *input, int ilen,
     sm3_starts( &ctx );
     sm3_update( &ctx, input, ilen ); //处理输入数据
     sm3_finish( &ctx, output ); //计算最终的哈希值（填充）
+
+    memset( &ctx, 0, sizeof( sm3_context ) );
+}
+
+/*
+ * output = SM3( file contents )
+ */
+int sm3_file( char *path, uint8_t output[32] )
+{
+    FILE *f;
+    size_t n;
+    sm3_context ctx;
+    uint8_t buf[1024];
+
+    if ( ( f = fopen( path, "rb" ) ) == NULL )
+        return ( 1 );
+
+    sm3_starts( &ctx );
+
+    while ( ( n = fread( buf, 1, sizeof( buf ), f ) ) > 0 )
+        sm3_update( &ctx, buf, (int) n );
+
+    sm3_finish( &ctx, output );
+
+    memset( &ctx, 0, sizeof( sm3_context ) );
+
+    if ( ferror( f ) != 0 )
+    {
+        fclose( f );
+        return ( 2 );
+    }
+
+    fclose( f );
+    return ( 0 );
+}
+
+/*
+ * SM3 HMAC context setup
+ */
+void sm3_hmac_starts( sm3_context *ctx, uint8_t *key, int keylen )
+{
+    int i;
+    uint8_t sum[32];
+
+    if ( keylen > 64 )
+    {
+        sm3( key, keylen, sum );
+        keylen = 32;
+        //keylen = ( is224 ) ? 28 : 32;
+        key = sum;
+    }
+
+    memset( ctx->ipad, 0x36, 64 );
+    memset( ctx->opad, 0x5C, 64 );
+
+    for ( i = 0; i < keylen; i++ )
+    {
+        ctx->ipad[i] = (uint8_t)( ctx->ipad[i] ^ key[i] );
+        ctx->opad[i] = (uint8_t)( ctx->opad[i] ^ key[i] );
+    }
+
+    sm3_starts( ctx);
+    sm3_update( ctx, ctx->ipad, 64 );
+
+    memset( sum, 0, sizeof( sum ) );
+}
+
+/*
+ * SM3 HMAC process buffer
+ */
+void sm3_hmac_update( sm3_context *ctx, uint8_t *input, int ilen )
+{
+    sm3_update( ctx, input, ilen );
+}
+
+/*
+ * SM3 HMAC final digest
+ */
+void sm3_hmac_finish( sm3_context *ctx, uint8_t output[32] )
+{
+    int hlen;
+    uint8_t tmpbuf[32];
+
+    //is224 = ctx->is224;
+    hlen =  32;
+
+    sm3_finish( ctx, tmpbuf );
+    sm3_starts( ctx );
+    sm3_update( ctx, ctx->opad, 64 );
+    sm3_update( ctx, tmpbuf, hlen );
+    sm3_finish( ctx, output );
+
+    memset( tmpbuf, 0, sizeof( tmpbuf ) );
+}
+
+/*
+ * output = HMAC-SM#( hmac key, input buffer )
+ */
+void sm3_hmac( uint8_t *key, int keylen,
+               uint8_t *input, int ilen,
+               uint8_t output[32] )
+{
+    sm3_context ctx;
+
+    sm3_hmac_starts( &ctx, key, keylen);
+    sm3_hmac_update( &ctx, input, ilen );
+    sm3_hmac_finish( &ctx, output );
 
     memset( &ctx, 0, sizeof( sm3_context ) );
 }
