@@ -1,0 +1,238 @@
+// Sample 1
+// Input:"abc"
+// Output:66c7f0f4 62eeedd9 d1f2d46b dc10e4e2 4167c487 5cf2f7a2 297da02b 8f4ba8e0
+
+// Sample 2
+// Input:"abcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd"
+// Outpuf:debe9ff9 2275b8a1 38604889 c18e5a4d 6fdb70e5 387e5765 293dcba3 9c0c5732
+
+#include "sm3.h"
+#include <string.h>
+#include <stdio.h>
+
+/*
+ * 32-bit integer manipulation macros (big endian)
+ */
+#ifndef GET_ULONG_BE
+#define GET_ULONG_BE(n,b,i)                             \
+{                                                       \
+    (n) = ( (uint32_t) (b)[(i)    ] << 24 )        \
+        | ( (uint32_t) (b)[(i) + 1] << 16 )        \
+        | ( (uint32_t) (b)[(i) + 2] <<  8 )        \
+        | ( (uint32_t) (b)[(i) + 3]       );       \
+}
+#endif
+
+#ifndef PUT_ULONG_BE
+#define PUT_ULONG_BE(n,b,i)                             \
+{                                                       \
+    (b)[(i)    ] = (uint8_t) ( (n) >> 24 );       \
+    (b)[(i) + 1] = (uint8_t) ( (n) >> 16 );       \
+    (b)[(i) + 2] = (uint8_t) ( (n) >>  8 );       \
+    (b)[(i) + 3] = (uint8_t) ( (n)       );       \
+}
+#endif
+
+/*
+ * SM3 context setup
+ */
+void sm3_starts( sm3_context *ctx )
+{
+    ctx->total[0] = 0;
+    ctx->total[1] = 0;
+
+    ctx->state[0] = 0x7380166F;
+    ctx->state[1] = 0x4914B2B9;
+    ctx->state[2] = 0x172442D7;
+    ctx->state[3] = 0xDA8A0600;
+    ctx->state[4] = 0xA96F30BC;
+    ctx->state[5] = 0x163138AA;
+    ctx->state[6] = 0xE38DEE4D;
+    ctx->state[7] = 0xB0FB0E4E;
+
+}
+
+static void sm3_process( sm3_context *ctx, uint8_t data[64] ) //压缩函数，要求输入必须为64字节
+{
+    uint32_t SS1, SS2, TT1, TT2, W[68], W1[64];
+    uint32_t A, B, C, D, E, F, G, H;
+    uint32_t T[64];
+    uint32_t Temp1, Temp2, Temp3, Temp4, Temp5;
+    int j;
+#ifdef _DEBUG
+    int i;
+#endif
+
+//  for(j=0; j < 68; j++)
+//      W[j] = 0;
+//  for(j=0; j < 64; j++)
+//      W1[j] = 0;
+
+    for (j = 0; j < 16; j++)
+        T[j] = 0x79CC4519;
+    for (j = 16; j < 64; j++)
+        T[j] = 0x7A879D8A;
+
+    GET_ULONG_BE( W[ 0], data,  0 );
+    GET_ULONG_BE( W[ 1], data,  4 );
+    GET_ULONG_BE( W[ 2], data,  8 );
+    GET_ULONG_BE( W[ 3], data, 12 );
+    GET_ULONG_BE( W[ 4], data, 16 );
+    GET_ULONG_BE( W[ 5], data, 20 );
+    GET_ULONG_BE( W[ 6], data, 24 );
+    GET_ULONG_BE( W[ 7], data, 28 );
+    GET_ULONG_BE( W[ 8], data, 32 );
+    GET_ULONG_BE( W[ 9], data, 36 );
+    GET_ULONG_BE( W[10], data, 40 );
+    GET_ULONG_BE( W[11], data, 44 );
+    GET_ULONG_BE( W[12], data, 48 );
+    GET_ULONG_BE( W[13], data, 52 );
+    GET_ULONG_BE( W[14], data, 56 );
+    GET_ULONG_BE( W[15], data, 60 );
+
+#ifdef _DEBUG
+    printf("Message with padding:\n");
+    for (i = 0; i < 8; i++)
+        printf("%08x ", W[i]);
+    printf("\n");
+    for (i = 8; i < 16; i++)
+        printf("%08x ", W[i]);
+    printf("\n");
+#endif
+
+#define FF0(x,y,z) ( (x) ^ (y) ^ (z))
+#define FF1(x,y,z) (((x) & (y)) | ( (x) & (z)) | ( (y) & (z)))
+
+#define GG0(x,y,z) ( (x) ^ (y) ^ (z))
+#define GG1(x,y,z) (((x) & (y)) | ( (~(x)) & (z)) )
+
+
+#define  SHL(x,n) (((x) & 0xFFFFFFFF) << n)
+#define ROTL(x,n) (SHL((x),n) | ((x) >> (32 - n)))
+
+#define P0(x) ((x) ^  ROTL((x),9) ^ ROTL((x),17))
+#define P1(x) ((x) ^  ROTL((x),15) ^ ROTL((x),23))
+
+    for (j = 16; j < 68; j++ )
+    {
+        //W[j] = P1( W[j-16] ^ W[j-9] ^ ROTL(W[j-3],15)) ^ ROTL(W[j - 13],7 ) ^ W[j-6];
+        //Why thd release's result is different with the debug's ?
+        //Below is okay. Interesting, Perhaps VC6 has a bug of Optimizaiton.
+
+        Temp1 = W[j - 16] ^ W[j - 9];
+        Temp2 = ROTL(W[j - 3], 15);
+        Temp3 = Temp1 ^ Temp2;
+        Temp4 = P1(Temp3);
+        Temp5 =  ROTL(W[j - 13], 7 ) ^ W[j - 6];
+        W[j] = Temp4 ^ Temp5;
+    }
+
+#ifdef _DEBUG
+    printf("Expanding message W0-67:\n");
+    for (i = 0; i < 68; i++)
+    {
+        printf("%08x ", W[i]);
+        if (((i + 1) % 8) == 0) printf("\n");
+    }
+    printf("\n");
+#endif
+
+    for (j =  0; j < 64; j++)
+    {
+        W1[j] = W[j] ^ W[j + 4];
+    }
+
+#ifdef _DEBUG
+    printf("Expanding message W'0-63:\n");
+    for (i = 0; i < 64; i++)
+    {
+        printf("%08x ", W1[i]);
+        if (((i + 1) % 8) == 0) printf("\n");
+    }
+    printf("\n");
+#endif
+
+    A = ctx->state[0];
+    B = ctx->state[1];
+    C = ctx->state[2];
+    D = ctx->state[3];
+    E = ctx->state[4];
+    F = ctx->state[5];
+    G = ctx->state[6];
+    H = ctx->state[7];
+#ifdef _DEBUG
+    printf("j     A       B        C         D         E        F        G       H\n");
+    printf("   %08x %08x %08x %08x %08x %08x %08x %08x\n", A, B, C, D, E, F, G, H);
+#endif
+
+    for (j = 0; j < 16; j++)
+    {
+        SS1 = ROTL((ROTL(A, 12) + E + ROTL(T[j], j)), 7);
+        SS2 = SS1 ^ ROTL(A, 12);
+        TT1 = FF0(A, B, C) + D + SS2 + W1[j];
+        TT2 = GG0(E, F, G) + H + SS1 + W[j];
+        D = C;
+        C = ROTL(B, 9);
+        B = A;
+        A = TT1;
+        H = G;
+        G = ROTL(F, 19);
+        F = E;
+        E = P0(TT2);
+#ifdef _DEBUG
+        printf("%02d %08x %08x %08x %08x %08x %08x %08x %08x\n", j, A, B, C, D, E, F, G, H);
+#endif
+    }
+
+    for (j = 16; j < 64; j++)
+    {
+        SS1 = ROTL((ROTL(A, 12) + E + ROTL(T[j], j)), 7);
+        SS2 = SS1 ^ ROTL(A, 12);
+        TT1 = FF1(A, B, C) + D + SS2 + W1[j];
+        TT2 = GG1(E, F, G) + H + SS1 + W[j];
+        D = C;
+        C = ROTL(B, 9);
+        B = A;
+        A = TT1;
+        H = G;
+        G = ROTL(F, 19);
+        F = E;
+        E = P0(TT2);
+#ifdef _DEBUG
+        printf("%02d %08x %08x %08x %08x %08x %08x %08x %08x\n", j, A, B, C, D, E, F, G, H);
+#endif
+    }
+
+    ctx->state[0] ^= A;
+    ctx->state[1] ^= B;
+    ctx->state[2] ^= C;
+    ctx->state[3] ^= D;
+    ctx->state[4] ^= E;
+    ctx->state[5] ^= F;
+    ctx->state[6] ^= G;
+    ctx->state[7] ^= H;
+#ifdef _DEBUG
+    printf("   %08x %08x %08x %08x %08x %08x %08x %08x\n", ctx->state[0], ctx->state[1], ctx->state[2],
+           ctx->state[3], ctx->state[4], ctx->state[5], ctx->state[6], ctx->state[7]);
+#endif
+}
+
+void sm3( uint8_t *input, int ilen,
+          uint8_t output[32] )
+{
+    sm3_context ctx;
+
+    sm3_starts( &ctx );
+    sm3_update( &ctx, input, ilen ); //处理输入数据
+    sm3_finish( &ctx, output ); //计算最终的哈希值（填充）
+
+    memset( &ctx, 0, sizeof( sm3_context ) );
+}
+
+
+
+
+
+
+
+
