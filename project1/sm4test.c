@@ -29,7 +29,7 @@ int main(int argc, char** argv)
 	i = 0;
 	sm4_setkey_enc(&ctx, key);
 	clock_t start = clock();
-	while (i < 1000000)
+	while (i < 100000)
 	{
 		sm4_crypt_ecb(&ctx, 1, 16, input, input);
 		i++;
