@@ -47,7 +47,14 @@ class Func: # 基础函数类
             raise ValueError("请先调用 Func.setup() 初始化大素数 p")
         return [self.hash_password(password) for password in passwords]
     
+    def generate_key_pair(self): #生成公私钥对
+        return paillier.generate_paillier_keypair()
     
+    def encrypt(self, text, public_key): #加法同态加密
+        return public_key.encrypt(text)
+    
+    def decrypt(self, ciphertext, private_key): #加法同态解密
+        return private_key.decrypt(ciphertext)
 
 class P1(Func):
     def __init__(self,password={"你好，我是你爹","你是谁？", "你是谁？我是谁？", "你是谁？我是谁？你是谁？", "你是谁？我是谁？你是谁？我是谁？"}):
@@ -79,7 +86,7 @@ class P2(Func):
     def __init__(self,password={("你好，我是你娘",10),("你是谁？",50), ("你是谁？我是谁？",100),("你是我儿子吗？",160), ("你是谁？我是你娘？你是谁？我是你娘？",520)}):
         self.password = password
         self.k2= self.generate_private_key()
-        self.pk,self.sk = paillier.generate_paillier_keypair()
+        self.pk,self.sk = self.generate_key_pair()  # 生成公私钥对
 
     def round1(self, hash_list): #接受参数
         self.hash_list = hash_list
@@ -87,14 +94,14 @@ class P2(Func):
     def round2(self): #pk包含在密文对象中隐式传递
         Z=[self.exp_mod(i, self.k2) for i in self.hash_list]
         random.shuffle(Z)
-        tmp = [(self.exp_mod(self.hash_password(tup[0]), self.k2),self.pk.encrypt(tup[1])) for tup in self.password] #获取(H(wj')^k2,Enc(tj'))
+        tmp = [(self.exp_mod(self.hash_password(tup[0]), self.k2),self.encrypt(tup[1],self.pk)) for tup in self.password] #获取(H(wj')^k2,Enc(tj'))
         random.shuffle(tmp)
         return set(Z), tmp
     
     def round3(self,sum): #接受参数
         if sum is None:
             return 0
-        all_t=self.sk.decrypt(sum)  # 解密sum
+        all_t=self.decrypt(sum,self.sk)  # 解密sum
         return all_t
     
 def test_protocol():

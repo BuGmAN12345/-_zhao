@@ -194,29 +194,7 @@ class P2(Func):
 
 ## 使用示例
 
-### 基础使用
-
-```python
-from google_password_checkup import *
-
-password1={<your text>}
-passowrd2={(<your text>,value)}
-Func.setup()
-p1= P1()
-p2= P2()
-hash_list= p1.round1()  # P1的第一轮
-p2.round1(hash_list)  # P2的第一轮
-print("第一轮交互完成")
-Z, hash_list = p2.round2()  # P2的第二轮
-p1.round2(Z, hash_list)  # P1的第二轮
-print("第二轮交互完成")
-sum = p1.round3()  # P1的第三轮
-all_t = p2.round3(sum)  # P2的第三轮
-print("交互协议完成")
-return p1.password, p2.password, all_t  # 返回密码和总和
-```
-
-### 完整测试
+### 完整测试代码
 
 ```python
 def test_protocol():
