@@ -127,6 +127,12 @@ static void sm3_process( sm3_context *ctx, uint8_t data[64] ) //压缩函数，�
         W[j] = Temp4 ^ Temp5;
     }
 
+    /*for (int i = 0; i < 68; i++) { // 调试输出
+        printf("0x%08X\t", W[i]);
+        if ((i+1) % 8 == 0) printf("\n");
+    }
+    printf("\n");*/
+
 #ifdef _DEBUG
     printf("Expanding message W0-67:\n");
     for (i = 0; i < 68; i++)
