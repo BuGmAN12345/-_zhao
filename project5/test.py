@@ -29,5 +29,18 @@ def test_sm2():
     print(public_keys_recovered)
     assert public_key.lower() in public_keys_recovered
 
+    print("-----------------test sign with same k---------------")
+    message1 = b'This is the first message for testing K reuse.'
+    message2 = b'This is the second message, different from the first.'
+
+    # 运行 K 值重用攻击测试
+    # test_k_reuse_attack 会在内部模拟使用相同的 K 进行两次签名，并尝试推导私钥。
+    derived_private_key = sm2_crypt.test_k_reuse_attack(message1, message2)
+
+    if derived_private_key:
+        print(f"\n攻击成功！推导出的私钥为: {derived_private_key}")
+    else:
+        print("\n攻击失败或未能推导出私钥。")
+
 if __name__ == '__main__':
     test_sm2()
