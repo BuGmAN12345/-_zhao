@@ -137,6 +137,152 @@ snarkjs groth16 verify \
 可以看到验证成功：
 ![零知识证明结果](images/zkoutput.png)
 
+```
+```
+
+# 附录：
+**poseidon2算法说明与代码README**
+
+## 报告 (Report)
+
+### 1. 引言
+
+本报告详细介绍了基于 Circom 2.2.2 实现的 Poseidon2 哈希函数电路设计与实现思路。Poseidon 是一种适用于零知识证明系统（ZK-SNARKs）的哈希函数，其核心特性是：
+
+* **高效的多项式约束结构**，能够在算术电路中以较少的约束实现非线性映射。
+* **可调参数化**，通过全 S-Box 轮和部分 S-Box 轮的组合，确保抗差分和抗线性攻击强度。
+
+本电路模板包括：
+
+1. **S-Box**: 非线性映射，采用 $x^5$ 实现。
+2. **Poseidon2Round**: 单轮逻辑，包括加轮常数、S-Box 变换、MDS 矩阵扩散。
+3. **Poseidon2Hash**: 整体哈希流程，按顺序执行全轮和部分轮并在末尾约束输出。
+
+---
+
+### 2. 数学推导与表示
+
+#### 2.1 S-Box 设计 ($x^5$)
+
+S-Box 是 Poseidon 的核心非线性部分，定义如下：
+
+$\mathrm{SBox}(x) = x^5. $
+
+将 $x^5$ 分解以减少电路约束：
+
+1. $x^2 = x \cdot x$;
+2. $x^3 = x^2 \cdot x$;
+3. $x^4 = x^3 \cdot x$;
+4. $x^5 = x^4 \cdot x$.
+
+对应 Circom 电路，每一步通过一次乘法约束完成，合计 4 次乘法约束实现 $x^5$。
+
+#### 2.2 轮常数加法
+
+Poseidon 的第 $r$ 轮，对状态向量 $\mathbf{s}^r = (s\_0, s\_1, \dots, s\_{t-1})$ 添加轮常数：
+
+$s_i' = s_i + c^r_i, \quad i = 0, \dots, t-1,$
+
+其中 $c^r\_i$ 是预先定义的常量阵。本实现简化为：
+
+$c^r_i = 3r + i + 1.$
+
+#### 2.3 部分与全 S-Box 轮
+
+* **全 S-Box 轮 (full rounds)**: 对所有 $t$ 个分量均应用 S-Box。
+* **部分 S-Box 轮 (partial rounds)**: 仅对第 0 分量应用 S-Box，其余分量保持线性。
+
+设总轮数为 $R = R\_F + R\_P$，其中 $R\_F$ 全轮数，$R\_P$ 部分轮数。通常取 $R\_F$ 较小，$R\_P$ 较大，以在保证安全的前提下降低非线性代价。
+
+#### 2.4 MDS 矩阵扩散
+
+扩散层使用最大距离可分离 (Maximum Distance Separable, MDS) 矩阵 $M \in \mathbb{F}^{t\times t}$，保证任何输入差异都能影响所有输出：
+
+$\mathbf{s}^{r+1} = M \times \mathbf{s}_{\text{after SBox}}^r.$
+
+本实现硬编码 $t=3$ 时的 MDS 矩阵：
+
+$M = \begin{pmatrix} 2 & 1 & 1 \\ 1 & 2 & 1 \\ 1 & 1 & 2 \end{pmatrix}.$
+
+### 3. Circom 实现细节
+
+1. **模板参数化**：
+
+   * `Poseidon2Round(current_round_type, round_index, state_width, total_rounds_count)` 接受当前轮类型、轮索引、状态宽度和总轮数，使得模板可扩展。
+2. **常量定义**：
+
+   * 在编译时通过 `var` 硬编码 MDS 矩阵和轮常数数组；简化了运行时计算成本。
+3. **电路连接**：
+
+   * 使用 `signal input` 和 `signal output` 定义输入输出；`component` 数组按顺序链接轮组件。
+4. **输出约束**：
+
+   * 在 `Poseidon2Hash` 中，使用 `expected_hash_output === states_history[TOTAL_ROUNDS][0];` 约束预期输出与电路最终状态相等。
+
+### 4. 性能与安全性考虑
+
+* **约束计数**：
+
+  * 每个 S-Box 消耗 4 个乘法约束，全轮 $t$ 个分量即 $4t$ 约束，部分轮 4 个约束。MDS 线性层无乘法约束开销。
+  * 总乘法约束约为 $4tR\_F + 4R\_P$。
+* **安全强度**：
+
+  * 采用全/部分轮混合设计，可防止差分/线性攻击。
+  * MDS 矩阵保证扩散性，使扰动无法局限于部分分量。
+
+---
+
+## README
+
+# Poseidon2 Circom 实现
+
+## 简介
+
+本项目基于 Circom 2.2.2 实现了适用于 ZK-SNARKs 的 Poseidon2 哈希函数电路。
+
+## 接口说明
+
+- **SBox**
+  - 输入: `in_val` (field)
+  - 输出: `out_val = in_val^5`
+
+- **Poseidon2Round**
+  - 参数: `current_round_type` (0 全轮, 1 部分轮), `round_index`, `state_width`, `total_rounds_count`
+  - 输入: `prev_state[ state_width ]`
+  - 输出: `next_state[ state_width ]`
+
+- **Poseidon2Hash**
+  - 输入: `in_message[2]` (消息元素数组)
+  - 输入: `expected_hash_output` (约束输出)
+  - 将抛出约束，确保最终哈希与预期一致。
+
+## 快速开始 (Demo)
+
+1. 安装 Circom：
+   ```bash
+   npm install -g circom@2.2.2
+   ```
+
+2. 编译电路：
+
+   ```bash
+   circom poseidon2.circom --r1cs --wasm --sym
+   ```
+3. 生成证明与验证：
+
+   ```bash
+   snarkjs groth16 setup poseidon2.r1cs pot12_final.ptau circuit_0000.zkey
+   snarkjs groth16 prove circuit_0000.zkey witness.wtns proof.json public.json
+   snarkjs groth16 verify verification_key.json public.json proof.json
+   ```
+
+## 参数配置
+
+* `RF_FULL_ROUNDS`: 全 S-Box 轮数，默认 8。
+* `RF_PARTIAL_ROUNDS`: 部分 S-Box 轮数，默认 56。
+* `STATE_WIDTH`: 状态宽度，默认 3。
+
+
 
 
 

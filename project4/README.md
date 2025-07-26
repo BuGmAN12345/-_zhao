@@ -23,6 +23,70 @@ SM3是中国国家密码管理局发布的密码杂凑算法标准，属于SHA-2
    - 消息后添加'1'位，然后添加'0'位使长度≡448 (mod 512)
    - 最后64位存储原始消息长度
 
+### 详细部件原理：
+
+#### 消息扩展（Message Expansion）
+
+对单个 512 位分组 $B$，先将其划分为 16 个 32 位字：
+$B = (B_0, B_1, \dots, B_{15}), \quad B_j \in \mathbb{F}_{2^{32}}.$
+
+然后扩展生成 68 个字 $W_j$：
+
+$$
+\begin{cases}
+W_j = B_j, & 0 \le j \le 15, \\
+W_j = P_1\bigl(W_{j-16} \oplus W_{j-9} \oplus \mathrm{ROTL}(W_{j-3},15)\bigr) \\ \quad \oplus \mathrm{ROTL}(W_{j-13},7) \oplus W_{j-6}, & 16 \le j \le 67,
+\end{cases}
+$$
+
+其中置换 $P_1$ 定义为：
+
+$$
+P_1(X) = X \oplus \mathrm{ROTL}(X,15) \oplus \mathrm{ROTL}(X,23).
+$$
+
+再由 $W_j$ 派生 64 个字 $W'_j$：
+$W'_j = W_j \oplus W_{j+4}, \quad 0 \le j \le 63.$
+
+#### 压缩函数（Compression Function）
+
+设输入链变量为 $(A,B,C,D,E,F,G,H)$，类型均为 32 位字。对第 $j$ 轮，定义常量
+
+$$
+T_j = \begin{cases}
+\mathtt{0x79CC4519}, & 0 \le j \le 15, \\
+\mathtt{0x7A879D8A}, & 16 \le j \le 63.
+\end{cases}
+$$
+
+布尔函数:
+
+$$
+\begin{aligned}
+FF_j(X,Y,Z) &= \begin{cases} X \oplus Y \oplus Z, & 0 \le j \le 15, \\ (X \land Y) \lor (X \land Z) \lor (Y \land Z), & 16 \le j \le 63, \end{cases}\\
+GG_j(X,Y,Z) &= \begin{cases} X \oplus Y \oplus Z, & 0 \le j \le 15, \\ (X \land Y) \lor (\neg X \land Z), & 16 \le j \le 63. \end{cases}
+\end{aligned}
+$$
+
+循环迭代更新变量:
+
+$$
+\begin{aligned}
+SS1 &= \mathrm{ROTL}\bigl(\mathrm{ROTL}(A,12) + E + \mathrm{ROTL}(T_j,j),7\bigr), \\
+SS2 &= SS1 \oplus \mathrm{ROTL}(A,12), \\
+TT1 &= FF_j(A,B,C) + D + SS2 + W'_j, \\
+TT2 &= GG_j(E,F,G) + H + SS1 + W_j, \\
+D &\leftarrow C, \quad C \leftarrow \mathrm{ROTL}(B,9), \quad B \leftarrow A, \quad A \leftarrow TT1, \\
+H &\leftarrow G, \quad G \leftarrow \mathrm{ROTL}(F,19), \quad F \leftarrow E, \quad E \leftarrow P_0(TT2),
+\end{aligned}
+$$
+
+其中
+$P_0(X) = X \oplus \mathrm{ROTL}(X,9) \oplus \mathrm{ROTL}(X,17).$
+
+迭代64次后，将最终变量与初始链变量逐位异或：
+$V^{(i+1)}_k = A \oplus IV_k \quad (k=0\ldots7).$
+
 ## 代码优化方案
 
 ### 1. 宏定义优化
@@ -397,3 +461,161 @@ simd版本与普通版本对比如下图（100万次hash流测试下）：
 ![merkle tree](image.png)
 可以看到，通过接口`void sm3(uint8_t *input, int ilen, uint8_t output[32]);`，我成功构建了merkle tree，
 并完成了叶子的存在性证明和不存在性证明
+
+
+
+
+
+
+
+
+
+
+
+## SM3 算法实验报告
+
+### 1. 引言
+
+SM3（中国国家密码管理局出版的密码浆分算法标准）是一种中国自主设计的密码哈希函数，输出长度为256位（32字节）。其结构遵循 Merkle–Damgård 架构，与 SHA-2 系列在整体框架上类似，但对内部迭代函数、常量和置换进行了专门优化，以满足国产密码标准的安全需求。
+
+本实验报告将从数学推导、算法表示、实现思路、优化方案和安全分析等角度，系统地详细论述 SM3 算法。
+
+---
+
+### 2. 算法数学表示
+
+#### 2.1 整体结构：Merkle–Damgård 架构
+
+设原始消息按512位（64字节）分块：
+$M = B_0 \,\|\, B_1 \,\|\, \cdots \,\|\, B_{n-1},$
+其中每个块 $B_i$ 大小为 512 位。
+
+1. **填充**：在消息后追加 `1` 位，然后追加若干 `0` 使得长度 $\equiv 448\pmod{512}$，最后用 64 位双字长度字段表示未填充前的消息比特长度 $L$：
+   $L = \mathrm{len}(M) \quad (\text{以比特为单位}).$
+2. **初始化向量**：
+   $V^{(0)} = (IV_0, IV_1, \dots, IV_7),$
+   其中
+   \begin{align\*}
+   IV_0 &= \mathtt{0x7380166F}, \\\[4pt]
+   IV_1 &= \mathtt{0x4914B2B9}, \\\[4pt]
+   IV_2 &= \mathtt{0x172442D7}, \\\[4pt]
+   IV_3 &= \mathtt{0xDA8A0600}, \\\[4pt]
+   IV_4 &= \mathtt{0xA96F30BC}, \\\[4pt]
+   IV_5 &= \mathtt{0x163138AA}, \\\[4pt]
+   IV_6 &= \mathtt{0xE38DEE4D}, \\\[4pt]
+   IV_7 &= \mathtt{0xB0FB0E4E}.
+   \end{align\*}
+3. **迭代压缩**：对每个分块 $B_i$，计算：
+   $V^{(i+1)} = CF\bigl(V^{(i)}, B_i\bigr),$
+   其中 $CF$ 为压缩函数，输入 256 位链变量和 512 位分块，输出 256 位新链变量。
+4. **输出**：最终哈希值为
+   $\mathrm{Hash}(M) = V^{(n)}_0 \,\|\, V^{(n)}_1 \,\|\, \cdots \,\|\, V^{(n)}_7.$
+
+#### 2.2 消息扩展（Message Expansion）
+
+对单个 512 位分组 $B$，先将其划分为 16 个 32 位字：
+$B = (B_0, B_1, \dots, B_{15}), \quad B_j \in \mathbb{F}_{2^{32}}.$
+
+然后扩展生成 68 个字 $W_j$：
+
+$$
+\begin{cases}
+W_j = B_j, & 0 \le j \le 15, \\
+W_j = P_1\bigl(W_{j-16} \oplus W_{j-9} \oplus \mathrm{ROTL}(W_{j-3},15)\bigr) \\ \quad \oplus \mathrm{ROTL}(W_{j-13},7) \oplus W_{j-6}, & 16 \le j \le 67,
+\end{cases}
+$$
+
+其中置换 $P_1$ 定义为：
+
+$$
+P_1(X) = X \oplus \mathrm{ROTL}(X,15) \oplus \mathrm{ROTL}(X,23).
+$$
+
+再由 $W_j$ 派生 64 个字 $W'_j$：
+$W'_j = W_j \oplus W_{j+4}, \quad 0 \le j \le 63.$
+
+#### 2.3 压缩函数（Compression Function）
+
+设输入链变量为 $(A,B,C,D,E,F,G,H)$，类型均为 32 位字。对第 $j$ 轮，定义常量
+
+$$
+T_j = \begin{cases}
+\mathtt{0x79CC4519}, & 0 \le j \le 15, \\
+\mathtt{0x7A879D8A}, & 16 \le j \le 63.
+\end{cases}
+$$
+
+布尔函数:
+
+$$
+\begin{aligned}
+FF_j(X,Y,Z) &= \begin{cases} X \oplus Y \oplus Z, & 0 \le j \le 15, \\ (X \land Y) \lor (X \land Z) \lor (Y \land Z), & 16 \le j \le 63, \end{cases}\\
+GG_j(X,Y,Z) &= \begin{cases} X \oplus Y \oplus Z, & 0 \le j \le 15, \\ (X \land Y) \lor (\neg X \land Z), & 16 \le j \le 63. \end{cases}
+\end{aligned}
+$$
+
+循环迭代更新变量:
+
+$$
+\begin{aligned}
+SS1 &= \mathrm{ROTL}\bigl(\mathrm{ROTL}(A,12) + E + \mathrm{ROTL}(T_j,j),7\bigr), \\
+SS2 &= SS1 \oplus \mathrm{ROTL}(A,12), \\
+TT1 &= FF_j(A,B,C) + D + SS2 + W'_j, \\
+TT2 &= GG_j(E,F,G) + H + SS1 + W_j, \\
+D &\leftarrow C, \quad C \leftarrow \mathrm{ROTL}(B,9), \quad B \leftarrow A, \quad A \leftarrow TT1, \\
+H &\leftarrow G, \quad G \leftarrow \mathrm{ROTL}(F,19), \quad F \leftarrow E, \quad E \leftarrow P_0(TT2),
+\end{aligned}
+$$
+
+其中
+$P_0(X) = X \oplus \mathrm{ROTL}(X,9) \oplus \mathrm{ROTL}(X,17).$
+
+迭代64次后，将最终变量与初始链变量逐位异或：
+$V^{(i+1)}_k = A \oplus IV_k \quad (k=0\ldots7).$
+
+---
+
+### 3. 实现思路与优化方案
+
+#### 3.1 宏与内联优化
+
+* **GET_ULONG_BE / PUT_ULONG_BE**：通过宏实现高效大端字节序读写，避免逐字节处理。
+* **位运算内联**：如 `ROTL(x,n)`、`P0(x)`、`P1(x)` 等均定义为宏，消除函数调用开销。
+
+#### 3.2 流式处理与上下文结构
+
+* 维护 `sm3_context` 结构，包含链变量 `state[8]`、缓冲区 `buffer[64]`、已处理长度 `total_len`。支持多次 `update()` 调用分块处理大消息。
+
+#### 3.3 编译器与SIMD优化
+
+* **循环展开**：在消息扩展与压缩主循环中适度展开，减少分支。
+* **SIMD 指令**：使用 SSE2/AVX2 并行计算消息扩展的 `W_j` 及 `W'_j`，将多组 32-bit 操作一并执行，实测最高可提升 3-4 倍吞吐。
+
+#### 3.4 调试与安全
+
+* **条件编译**：`#ifdef DEBUG` 打印每轮 `A-H` 和 `W` 值，便于差分调试。
+* **边界检查**：在 `update()` 中断言 `ilen>=0`，确保输入合法。
+
+---
+
+### 4. 安全性分析
+
+1. **抗碰撞性**：基于 Merkle–Damgård，抵抗碰撞攻击依赖于压缩函数的抗碰撞性，SM3 压缩函数经过公开分析，未发现有效攻击。
+2. **抗长度扩展**：Merkle–Damgård 结构固有长度扩展弱点，应用场景需配合 HMAC-SM3 防止此攻击。
+
+---
+
+### 5. 实验结果与测试
+
+| 测试向量     | 输入字节串          | 哈希输出 (hex)                                                                |
+| -------- | -------------- | ------------------------------------------------------------------------- |
+| 标准样例一    | "abc"          | `66C7F0F4 62EEEDD9 D1F2D46B DC10E4E2 4167C487 5CF2F7A2 297DA02B 8F4BA8E0` |
+| 重复64字节样例 | 64 次 "abcd" 拼接 | `DEBE9FF9 2275B8A1 38604889 C18E5A4D 6FDB70E5 387E5765 293DCBA3 9C0C5732` |
+
+实验环境：Intel i7-10700K, GCC 11.2，开启 `-O3` 优化。
+
+---
+
+### 6. Merkle 树应用（附录）
+
+当使用 SM3 构建 Merkle Hash Tree 时，节点哈希选用 SM3 作为底层 `Hash()`，其他流程同 RFC6962 描述。可利用 SM3 的高速流式特性高效构建和验证大规模日志。
