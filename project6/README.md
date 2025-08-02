@@ -255,3 +255,8 @@ print(f"交集数值总和: {output}")
 ## 测试结果
 ![result](result.png)
 可以看到，两个password的交集为'你是谁？'和'你是谁？我是谁？'，分别对应value为50和100，交集为150
+
+## 参考文献
+
+*Mihaela Ion, Ben Kreuter, Ahmet Erhan Nergiz, Sarvar Patel, Mariana Raykova, Shobhit Saxena, Karn Seth, David Shanahan, Moti Yung:*
+*On Deploying Secure Computing Commercially: Private Intersection-Sum Protocols and their Business Applications. IACR Cryptol. ePrint* *Arch. 2019: 723 (2019)*
